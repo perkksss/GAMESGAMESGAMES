@@ -122,7 +122,6 @@
         let currentUserId = null;
         let selectedFile = null;
         let filesCache = []; // Cache for the last retrieved file list
-        let listenerAttached = false; // Flag to ensure the file listener is only attached once.
 
         // --- Main App Logic ---
 
@@ -309,48 +308,45 @@
         });
 
 
-        // --- Authentication Flow ---
-        onAuthStateChanged(auth, (user) => {
-            if (user) {
-                // User is signed in.
-                currentUserId = user.uid;
-                userIdDisplay.textContent = currentUserId;
-                userInfo.style.display = 'inline-block';
-                uploaderSection.style.display = 'block';
-
-                // Attach the listener ONLY when we have a confirmed user
-                // and only attach it once.
-                if (!listenerAttached) {
-                    listenForPublicFiles();
-                    listenerAttached = true;
+        // --- Application Initialization ---
+        async function main() {
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    // User is signed in.
+                    currentUserId = user.uid;
+                    userIdDisplay.textContent = currentUserId;
+                    userInfo.style.display = 'inline-block';
+                    uploaderSection.style.display = 'block';
+                } else {
+                    // User is signed out.
+                    currentUserId = null;
+                    userInfo.style.display = 'none';
+                    uploaderSection.style.display = 'none';
                 }
-            } else {
-                // User is signed out.
-                currentUserId = null;
-                userInfo.style.display = 'none';
-                uploaderSection.style.display = 'none';
-            }
-            
-            // Re-render the file list to ensure delete buttons are shown/hidden correctly.
-            renderFileList(filesCache); 
-        });
+                // Re-render the list anytime auth state changes to update UI (e.g., delete buttons)
+                renderFileList(filesCache);
+            });
 
-        // Initial setup: trigger the sign-in process.
-        (async () => {
             try {
+                // First, sign in and wait for it to complete.
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
                 } else {
                     await signInAnonymously(auth);
                 }
-                // The onAuthStateChanged listener will handle the rest.
+
+                // NOW that we are authenticated, we can safely listen for files.
+                listenForPublicFiles();
+
             } catch (error) {
                 console.error("Authentication failed:", error);
-                userIdDisplay.textContent = 'Auth Error';
                 loadingMessage.style.display = 'none';
-                fileList.innerHTML = `<p class="text-red-400 text-center py-8">Could not authenticate to load files.</p>`;
+                fileList.innerHTML = `<p class="text-red-400 text-center py-8">Could not authenticate to load files. Please check the console.</p>`;
             }
-        })();
+        }
+
+        // Start the application
+        main();
 
     </script>
 </body>
