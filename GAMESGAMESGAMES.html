@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My File & Game Hub</title>
+    
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        /* Custom styles to enhance the look and feel */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827; /* bg-gray-900 */
+            color: #f3f4f6; /* text-gray-100 */
+        }
+        .file-item:hover {
+            background-color: #1f2937; /* bg-gray-800 */
+        }
+        .btn {
+            transition: all 0.2s ease-in-out;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+        /* Custom progress bar style */
+        #progressBar {
+            transition: width 0.3s ease-in-out;
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <div class="container mx-auto p-4 sm:p-6 lg:p-8 max-w-4xl">
+
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-4xl sm:text-5xl font-bold text-white mb-2">My File & Game Hub</h1>
+            <p class="text-lg text-gray-400">Upload, manage, and share your creations.</p>
+            <div id="userInfo" class="mt-4 text-xs text-gray-500 bg-gray-800 rounded-full px-4 py-1 inline-block hidden">
+                User ID: <span id="userIdDisplay" class="font-mono">loading...</span>
+            </div>
+        </header>
+
+        <!-- Uploader Section -->
+        <div id="uploaderSection" class="bg-gray-800 rounded-xl shadow-2xl p-6 mb-8 hidden">
+            <h2 class="text-2xl font-semibold mb-4 text-white">Upload a New File</h2>
+            <div class="flex flex-col sm:flex-row items-center gap-4">
+                <!-- File Input -->
+                <input type="file" id="fileInput" class="hidden">
+                <label for="fileInput" id="fileLabel" class="w-full sm:w-auto flex-grow text-center cursor-pointer bg-gray-700 text-gray-300 rounded-lg px-4 py-3 border-2 border-dashed border-gray-600 hover:bg-gray-600 hover:border-gray-500 transition-colors">
+                    <i class="fas fa-file-arrow-up mr-2"></i>
+                    <span id="fileName">Select a file...</span>
+                </label>
+                <!-- Upload Button -->
+                <button id="uploadButton" class="btn w-full sm:w-auto bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-6 rounded-lg shadow-lg disabled:bg-gray-500 disabled:cursor-not-allowed" disabled>
+                    <i class="fas fa-cloud-upload-alt mr-2"></i>
+                    Upload
+                </button>
+            </div>
+            <!-- Progress Bar -->
+            <div id="progressBarContainer" class="w-full bg-gray-700 rounded-full mt-4 h-4 hidden">
+                <div id="progressBar" class="bg-indigo-500 h-4 rounded-full text-xs font-medium text-indigo-100 text-center p-0.5 leading-none" style="width: 0%">0%</div>
+            </div>
+        </div>
+
+        <!-- File List Section -->
+        <div>
+            <h2 class="text-2xl font-semibold mb-4 text-white">Public Files</h2>
+            <div id="fileList" class="space-y-3">
+                <!-- Files will be dynamically inserted here -->
+                <p id="loadingMessage" class="text-gray-400 text-center py-8">
+                    <i class="fas fa-spinner fa-spin mr-2"></i>Loading files...
+                </p>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Firebase and App Logic -->
+    <script type="module">
+        // Firebase Imports
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, onAuthStateChanged, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, query, onSnapshot, deleteDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+
+        // --- Firebase Configuration ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // --- Initialize Firebase Services ---
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const storage = getStorage(app);
+
+        // --- DOM Element References ---
+        const userInfo = document.getElementById('userInfo');
+        const userIdDisplay = document.getElementById('userIdDisplay');
+        const uploaderSection = document.getElementById('uploaderSection');
+        const fileInput = document.getElementById('fileInput');
+        const fileLabel = document.getElementById('fileLabel');
+        const fileNameDisplay = document.getElementById('fileName');
+        const uploadButton = document.getElementById('uploadButton');
+        const progressBarContainer = document.getElementById('progressBarContainer');
+        const progressBar = document.getElementById('progressBar');
+        const fileList = document.getElementById('fileList');
+        const loadingMessage = document.getElementById('loadingMessage');
+
+        let currentUserId = null;
+        let selectedFile = null;
+        let filesCache = []; // Cache for the last retrieved file list
+
+        // --- Main App Logic ---
+
+        /**
+         * Formats file size from bytes to a human-readable string.
+         */
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        /**
+         * Gets a suitable Font Awesome icon for a given file type.
+         */
+        function getFileIcon(fileType) {
+            if (fileType.startsWith('image/')) return 'fa-solid fa-file-image';
+            if (fileType.startsWith('video/')) return 'fa-solid fa-file-video';
+            if (fileType.startsWith('audio/')) return 'fa-solid fa-file-audio';
+            if (fileType === 'application/pdf') return 'fa-solid fa-file-pdf';
+            if (fileType.includes('zip') || fileType.includes('compressed')) return 'fa-solid fa-file-zipper';
+            if (fileType === 'text/html' || fileType.includes('javascript')) return 'fa-solid fa-file-code';
+            if (fileType.startsWith('text/')) return 'fa-solid fa-file-lines';
+            return 'fa-solid fa-file'; // Generic file icon
+        }
+
+        /**
+         * Renders the list of public files in the UI.
+         */
+        function renderFileList(files) {
+            filesCache = files; // Update the cache
+            fileList.innerHTML = ''; 
+            if (files.length === 0) {
+                fileList.innerHTML = `<p class="text-gray-400 text-center py-8">No public files yet. Be the first to upload!</p>`;
+            } else {
+                files.forEach(file => {
+                    const fileItem = document.createElement('div');
+                    fileItem.className = 'file-item bg-gray-800/50 rounded-lg p-4 flex items-center gap-4 transition-all duration-200 shadow-md';
+                    
+                    const storagePath = `public-files/${file.ownerId}/${file.name}`;
+
+                    const deleteButtonHTML = currentUserId === file.ownerId ? `
+                        <button data-doc-id="${file.id}" data-storage-path="${storagePath}" class="btn delete-btn text-red-500 hover:text-red-400 px-3 py-2 rounded-md text-sm font-medium">
+                            <i class="fas fa-trash-alt mr-1"></i> Delete
+                        </button>
+                    ` : '';
+
+                    fileItem.innerHTML = `
+                        <div class="text-2xl text-indigo-400 w-8 text-center">
+                            <i class="${getFileIcon(file.type)}"></i>
+                        </div>
+                        <div class="flex-grow overflow-hidden">
+                            <p class="font-semibold text-white truncate">${file.name}</p>
+                            <p class="text-sm text-gray-400">${formatFileSize(file.size)} - ${file.type}</p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <a href="${file.url}" target="_blank" class="btn text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">
+                                <i class="fas fa-eye mr-1"></i> View
+                            </a>
+                            ${deleteButtonHTML}
+                        </div>
+                    `;
+                    fileList.appendChild(fileItem);
+                });
+            }
+        }
+
+        /**
+         * Sets up a real-time listener for public files in Firestore.
+         */
+        function listenForPublicFiles() {
+            const filesCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'files');
+            const q = query(filesCollectionRef);
+
+            onSnapshot(q, (snapshot) => {
+                const files = [];
+                snapshot.forEach(doc => {
+                    files.push({ id: doc.id, ...doc.data() });
+                });
+                files.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
+                renderFileList(files);
+                loadingMessage.style.display = 'none';
+            }, (error) => {
+                console.error("Error listening for file changes: ", error);
+                fileList.innerHTML = `<p class="text-red-400 text-center py-8">Error loading files. Please check the console.</p>`;
+            });
+        }
+
+        /**
+         * Handles the file upload process.
+         */
+        async function handleUpload() {
+            if (!selectedFile || !currentUserId) {
+                alert("Please select a file and be logged in to upload.");
+                return;
+            }
+
+            uploadButton.disabled = true;
+            progressBarContainer.style.display = 'block';
+            
+            const storageRef = ref(storage, `public-files/${currentUserId}/${selectedFile.name}`);
+            const uploadTask = uploadBytesResumable(storageRef, selectedFile);
+
+            uploadTask.on('state_changed',
+                (snapshot) => {
+                    const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+                    progressBar.style.width = progress + '%';
+                    progressBar.textContent = progress + '%';
+                },
+                (error) => {
+                    console.error("Upload failed:", error);
+                    alert("Upload failed. See console for details.");
+                    progressBarContainer.style.display = 'none';
+                    uploadButton.disabled = false;
+                },
+                async () => {
+                    const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                    
+                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'files'), {
+                        name: selectedFile.name,
+                        url: downloadURL,
+                        type: selectedFile.type,
+                        size: selectedFile.size,
+                        createdAt: serverTimestamp(),
+                        ownerId: currentUserId
+                    });
+
+                    progressBar.style.width = '0%';
+                    progressBar.textContent = '0%';
+                    progressBarContainer.style.display = 'none';
+                    fileNameDisplay.textContent = 'Select a file...';
+                    fileInput.value = '';
+                    selectedFile = null;
+                }
+            );
+        }
+        
+        /**
+         * Handles the file deletion process.
+         */
+        async function handleDelete(docId, storagePath) {
+            if (!currentUserId) return;
+            
+            try {
+                const fileRef = ref(storage, storagePath);
+                await deleteObject(fileRef);
+
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'files', docId);
+                await deleteDoc(docRef);
+                
+            } catch (error) {
+                console.error("Error deleting file: ", error);
+                alert("Could not delete the file. You must be the owner. See console for details.");
+            }
+        }
+
+
+        // --- Event Listeners ---
+        fileInput.addEventListener('change', (e) => {
+            selectedFile = e.target.files[0];
+            if (selectedFile) {
+                fileNameDisplay.textContent = selectedFile.name;
+                uploadButton.disabled = false;
+            } else {
+                fileNameDisplay.textContent = 'Select a file...';
+                uploadButton.disabled = true;
+            }
+        });
+
+        uploadButton.addEventListener('click', handleUpload);
+        
+        fileList.addEventListener('click', (e) => {
+            const deleteBtn = e.target.closest('.delete-btn');
+            if (deleteBtn) {
+                const docId = deleteBtn.dataset.docId;
+                const storagePath = deleteBtn.dataset.storagePath;
+                if (docId && storagePath) {
+                    handleDelete(docId, storagePath);
+                }
+            }
+        });
+
+
+        // --- Authentication Flow ---
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUserId = user.uid;
+                userIdDisplay.textContent = currentUserId;
+                userInfo.style.display = 'inline-block';
+                uploaderSection.style.display = 'block';
+            } else {
+                currentUserId = null;
+                userInfo.style.display = 'none';
+                uploaderSection.style.display = 'none';
+            }
+            // Re-render the list with the correct user ID to update UI (e.g., delete buttons)
+            renderFileList(filesCache); 
+        });
+
+        // Initial setup
+        (async () => {
+            try {
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                // Now that we are authenticated, it's safe to listen for files.
+                listenForPublicFiles();
+            } catch (error) {
+                console.error("Authentication failed:", error);
+                userIdDisplay.textContent = 'Auth Error';
+                loadingMessage.style.display = 'none';
+                fileList.innerHTML = `<p class="text-red-400 text-center py-8">Could not authenticate to load files.</p>`;
+            }
+        })();
+
+    </script>
+</body>
+</html>
