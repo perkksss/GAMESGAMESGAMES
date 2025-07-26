@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GAMESGAMESGAMES</title>
+    <title>My File & Game Hub</title>
     
     <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -45,8 +45,8 @@
 
         <!-- Header -->
         <header class="text-center mb-8">
-            <h1 class="text-4xl sm:text-5xl font-bold text-white mb-2">GAMESGAMESGAMES</h1>
-            <p class="text-lg text-gray-400">GAMESGAMESGAMES</p>
+            <h1 class="text-4xl sm:text-5xl font-bold text-white mb-2">My File & Game Hub</h1>
+            <p class="text-lg text-gray-400">Upload, manage, and share your creations.</p>
             <div id="userInfo" class="mt-4 text-xs text-gray-500 bg-gray-800 rounded-full px-4 py-1 inline-block hidden">
                 User ID: <span id="userIdDisplay" class="font-mono">loading...</span>
             </div>
@@ -80,7 +80,7 @@
             <div id="fileList" class="space-y-3">
                 <!-- Files will be dynamically inserted here -->
                 <p id="loadingMessage" class="text-gray-400 text-center py-8">
-                    <i class="fas fa-spinner fa-spin mr-2"></i>Loading files...
+                    <i class="fas fa-spinner fa-spin mr-2"></i>Authenticating...
                 </p>
             </div>
         </div>
@@ -122,6 +122,7 @@
         let currentUserId = null;
         let selectedFile = null;
         let filesCache = []; // Cache for the last retrieved file list
+        let listenerAttached = false; // Flag to ensure the file listener is only attached once.
 
         // --- Main App Logic ---
 
@@ -156,6 +157,7 @@
         function renderFileList(files) {
             filesCache = files; // Update the cache
             fileList.innerHTML = ''; 
+            loadingMessage.style.display = 'none'; // Hide loading message once we render
             if (files.length === 0) {
                 fileList.innerHTML = `<p class="text-gray-400 text-center py-8">No public files yet. Be the first to upload!</p>`;
             } else {
@@ -195,6 +197,7 @@
          * Sets up a real-time listener for public files in Firestore.
          */
         function listenForPublicFiles() {
+            loadingMessage.innerHTML = `<i class="fas fa-spinner fa-spin mr-2"></i>Loading files...`;
             const filesCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'files');
             const q = query(filesCollectionRef);
 
@@ -205,7 +208,6 @@
                 });
                 files.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
                 renderFileList(files);
-                loadingMessage.style.display = 'none';
             }, (error) => {
                 console.error("Error listening for file changes: ", error);
                 fileList.innerHTML = `<p class="text-red-400 text-center py-8">Error loading files. Please check the console.</p>`;
@@ -310,20 +312,30 @@
         // --- Authentication Flow ---
         onAuthStateChanged(auth, (user) => {
             if (user) {
+                // User is signed in.
                 currentUserId = user.uid;
                 userIdDisplay.textContent = currentUserId;
                 userInfo.style.display = 'inline-block';
                 uploaderSection.style.display = 'block';
+
+                // Attach the listener ONLY when we have a confirmed user
+                // and only attach it once.
+                if (!listenerAttached) {
+                    listenForPublicFiles();
+                    listenerAttached = true;
+                }
             } else {
+                // User is signed out.
                 currentUserId = null;
                 userInfo.style.display = 'none';
                 uploaderSection.style.display = 'none';
             }
-            // Re-render the list with the correct user ID to update UI (e.g., delete buttons)
+            
+            // Re-render the file list to ensure delete buttons are shown/hidden correctly.
             renderFileList(filesCache); 
         });
 
-        // Initial setup
+        // Initial setup: trigger the sign-in process.
         (async () => {
             try {
                 if (initialAuthToken) {
@@ -331,8 +343,7 @@
                 } else {
                     await signInAnonymously(auth);
                 }
-                // Now that we are authenticated, it's safe to listen for files.
-                listenForPublicFiles();
+                // The onAuthStateChanged listener will handle the rest.
             } catch (error) {
                 console.error("Authentication failed:", error);
                 userIdDisplay.textContent = 'Auth Error';
